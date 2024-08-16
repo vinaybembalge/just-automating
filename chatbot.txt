@@ -1,0 +1,263 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, roc_auc_score
+from sklearn.feature_selection import chi2, SelectKBest, f_classif
+import matplotlib.pyplot as plt
+
+# Using RandomForestClassifier as an example model
+model = RandomForestClassifier(random_state=42)
+model.fit(X_train, y_train)
+
+# Using RandomForestClassifier as an example model
+model = RandomForestClassifier(random_state=42)
+model.fit(X_train, y_train)
+
+# Predict probabilities
+y_pred_proba = model.predict_proba(X_test)[:, 1]
+
+# Calculate AUROC score
+auroc = roc_auc_score(y_test, y_pred_proba)
+print(f'AUROC Score: {auroc}')
+
+# Calculate Gini score
+gini = 2 * auroc - 1
+print(f'Gini Score: {gini}')
+
+# Plotting ROC Curve
+fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+roc_auc = auc(fpr, tpr)
+
+plt.figure()
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Receiver Operating Characteristic')
+plt.legend(loc="lower right")
+plt.show()
+
+# Plotting Precision-Recall Curve
+precision, recall, _ = precision_recall_curve(y_test, y_pred_proba)
+plt.figure()
+plt.plot(recall, precision, color='blue', lw=2)
+plt.xlabel('Recall')
+plt.ylabel('Precision')
+plt.title('Precision-Recall Curve')
+plt.show()
+
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, roc_auc_score, classification_report, confusion_matrix
+from sklearn.feature_selection import chi2, SelectKBest, f_classif
+from sklearn.pipeline import Pipeline
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load the dataset
+data = pd.read_csv('credit_data.csv')  # Replace with your dataset path
+
+# Explore the data
+print(data.info())
+print(data.describe())
+
+# Handling missing values (example: filling with mean, mode, etc.)
+data.fillna(data.mean(), inplace=True)
+
+# Encoding categorical variables (if any)
+for col in data.select_dtypes(include=['object']).columns:
+    le = LabelEncoder()
+    data[col] = le.fit_transform(data[col])
+
+# Define feature matrix X and target vector y
+X = data.drop('Default', axis=1)
+y = data['Default']
+
+# Splitting the data into train and test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+# Standardizing the features
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+
+# Feature selection using Chi-squared
+chi2_selector = SelectKBest(chi2, k=10)
+X_train_chi2 = chi2_selector.fit_transform(X_train, y_train)
+X_test_chi2 = chi2_selector.transform(X_test)
+
+# Feature selection using ANOVA F-statistics
+anova_selector = SelectKBest(f_classif, k=10)
+X_train_anova = anova_selector.fit_transform(X_train, y_train)
+X_test_anova = anova_selector.transform(X_test)
+
+# Weight of Evidence (WOE) and Information Value (IV) for feature engineering
+def calculate_woe_iv(df, feature, target):
+    eps = 0.0001
+    lst = []
+    for i in range(df[feature].nunique()):
+        val = df[feature].unique()[i]
+        lst.append({
+            'Value': val,
+            'All': df[df[feature] == val].count()[feature],
+            'Good': df[(df[feature] == val) & (df[target] == 0)].count()[feature],
+            'Bad': df[(df[feature] == val) & (df[target] == 1)].count()[feature]
+        })
+
+    dset = pd.DataFrame(lst)
+    dset['Bad%'] = dset['Bad'] / dset['Bad'].sum()
+    dset['Good%'] = dset['Good'] / dset['Good'].sum()
+    dset['WOE'] = np.log(dset['Good%'] / (dset['Bad%'] + eps))
+    dset['IV'] = (dset['Good%'] - dset['Bad%']) * dset['WOE']
+
+    iv = dset['IV'].sum()
+    dset = dset.sort_values(by='WOE')
+
+    return dset, iv
+
+# Apply WOE and IV to selected features
+woe_iv_info = {}
+for feature in X.columns:
+    _, iv = calculate_woe_iv(data, feature, 'Default')
+    woe_iv_info[feature] = iv
+
+# Select features based on IV threshold (example: IV > 0.1)
+selected_features = [k for k, v in woe_iv_info.items() if v > 0.1]
+X_train_woe = X_train[selected_features]
+X_test_woe = X_test[selected_features]
+
+
+
+# Using RandomForestClassifier as the model
+model = RandomForestClassifier(random_state=42)
+
+# Create a pipeline with feature selection and model
+pipeline = Pipeline([
+    ('feature_selection', SelectKBest(f_classif, k='all')),  # You can change k based on your feature selection strategy
+    ('classification', model)
+])
+
+# Hyperparameter tuning using GridSearchCV
+param_grid = {
+    'classification__n_estimators': [100, 200, 500],
+    'classification__max_depth': [None, 10, 20, 30],
+    'classification__min_samples_split': [2, 5, 10],
+    'classification__min_samples_leaf': [1, 2, 4],
+}
+
+grid_search = GridSearchCV(pipeline, param_grid, cv=5, scoring='roc_auc', n_jobs=-1)
+grid_search.fit(X_train, y_train)
+
+# Best model after hyperparameter tuning
+best_model = grid_search.best_estimator_
+print(f"Best Parameters: {grid_search.best_params_}")
+
+# Predict probabilities
+y_pred_proba = best_model.predict_proba(X_test)[:, 1]
+
+# Predict classes
+y_pred = best_model.predict(X_test)
+
+# Calculate AUROC score
+auroc = roc_auc_score(y_test, y_pred_proba)
+print(f'AUROC Score: {auroc}')
+
+# Calculate Gini score
+gini = 2 * auroc - 1
+print(f'Gini Score: {gini}')
+
+# Classification report
+print("Classification Report:")
+print(classification_report(y_test, y_pred))
+
+# Confusion matrix
+conf_matrix = confusion_matrix(y_test, y_pred)
+sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues')
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.show()
+
+# Plotting ROC Curve
+fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+roc_auc = auc(fpr, tpr)
+
+plt.figure()
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Receiver Operating Characteristic')
+plt.legend(loc="lower right")
+plt.show()
+
+# Plotting Precision-Recall Curve
+precision, recall, _ = precision_recall_curve(y_test, y_pred_proba)
+plt.figure()
+plt.plot(recall, precision, color='blue', lw=2)
+plt.xlabel('Recall')
+plt.ylabel('Precision')
+plt.title('Precision-Recall Curve')
+plt.show()
+
+# Predict probabilities
+y_pred_proba = best_model.predict_proba(X_test)[:, 1]
+
+# Predict classes
+y_pred = best_model.predict(X_test)
+
+# Calculate AUROC score
+auroc = roc_auc_score(y_test, y_pred_proba)
+print(f'AUROC Score: {auroc}')
+
+# Calculate Gini score
+gini = 2 * auroc - 1
+print(f'Gini Score: {gini}')
+
+# Classification report
+print("Classification Report:")
+print(classification_report(y_test, y_pred))
+
+# Confusion matrix
+conf_matrix = confusion_matrix(y_test, y_pred)
+sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues')
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.show()
+
+# Plotting ROC Curve
+fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+roc_auc = auc(fpr, tpr)
+
+plt.figure()
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Receiver Operating Characteristic')
+plt.legend(loc="lower right")
+plt.show()
+
+# Plotting Precision-Recall Curve
+precision, recall, _ = precision_recall_curve(y_test, y_pred_proba)
+plt.figure()
+plt.plot(recall, precision, color='blue', lw=2)
+plt.xlabel('Recall')
+plt.ylabel('Precision')
+plt.title('Precision-Recall Curve')
+plt.show()
+
